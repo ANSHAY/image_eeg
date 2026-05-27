@@ -1,0 +1,212 @@
+{
+  "config": {
+    "project": {
+      "name": "visual_cortex_reconstructor",
+      "seed": 42
+    },
+    "paths": {
+      "data_raw": "data/raw",
+      "data_processed": "/tmp/vcr_loso_n806d021/processed",
+      "imagenet_stimuli": "data/raw/imagenet_stimuli",
+      "spampinato": "data/raw/spampinato",
+      "things_eeg2": "data/raw/things_eeg2",
+      "imagenet_classes_file": "data/imagenet_classes.json",
+      "checkpoints": "checkpoints",
+      "results": "/tmp/vcr_loso_n806d021/results",
+      "runs": "/tmp/vcr_loso_n806d021/runs",
+      "logs": "logs",
+      "tests_fixtures": "tests/fixtures"
+    },
+    "dataset": {
+      "primary": {
+        "name": "spampinato",
+        "landing_url": "https://github.com/perceivelab/eeg_visual_classification",
+        "download_url": null,
+        "expected_filename": "eeg_signals_raw_with_mean_std.pth",
+        "expected_subjects": 3,
+        "expected_classes": 5
+      },
+      "fallback": {
+        "name": "things_eeg2",
+        "landing_url": "https://osf.io/anp5v/",
+        "download_url": null,
+        "expected_filename": "things-eeg2_preprocessed.zip",
+        "expected_subjects": 10,
+        "expected_classes": 1854
+      },
+      "imagenet_stimuli": {
+        "bundled_archive_name": "images.zip",
+        "landing_url": "https://www.image-net.org/",
+        "download_url": null,
+        "expected_extension": ".JPEG"
+      }
+    },
+    "eeg": {
+      "sample_rate_hz": 1000,
+      "num_channels": 128,
+      "trial_length_samples": 500,
+      "powerline_hz": 50
+    },
+    "preprocessing": {
+      "bandpass": {
+        "low_hz": 1.0,
+        "high_hz": 75.0,
+        "order": 4
+      },
+      "notch": {
+        "quality_factor": 30.0
+      },
+      "crop": {
+        "start_sample": 50,
+        "end_sample": 450
+      },
+      "use_ica": false,
+      "ica_components": 20,
+      "ica_kurtosis_threshold": 5.0
+    },
+    "streaming": {
+      "outlet_name": "EEG_VirtualRig",
+      "outlet_type": "EEG",
+      "source_id": "virtual_rig_001",
+      "marker_outlet_name": "EEG_VirtualRig_Markers",
+      "marker_outlet_type": "Markers",
+      "marker_source_id": "virtual_rig_markers_001",
+      "channel_format": "float32",
+      "default_speed": 1.0,
+      "chunk_size": 1,
+      "resolve_timeout_s": 5.0
+    },
+    "models": {
+      "clip": {
+        "hf_id": "openai/clip-vit-base-patch32",
+        "revision": null,
+        "embed_dim": 512,
+        "image_size": 224,
+        "embed_batch_size": 32
+      },
+      "encoder": {
+        "spatial_out": 64,
+        "temporal_channels": [
+          128,
+          128,
+          128
+        ],
+        "temporal_kernel": 5,
+        "temporal_stride": 2,
+        "dropout": 0.3,
+        "head_dropout": 0.5,
+        "pool_size": 16,
+        "proj_hidden": 1024
+      }
+    },
+    "training": {
+      "batch_size": 32,
+      "epochs": 5,
+      "num_workers": 0,
+      "optimizer": {
+        "name": "adamw",
+        "lr": 0.0003,
+        "weight_decay": 0.0001,
+        "betas": [
+          0.9,
+          0.999
+        ]
+      },
+      "scheduler": {
+        "name": "cosine_warm_restarts",
+        "T_0": 10,
+        "T_mult": 2
+      },
+      "loss": {
+        "info_nce_weight": 0.7,
+        "mse_weight": 0.3,
+        "temperature_init": 0.07,
+        "temperature_max": 100.0
+      },
+      "augment": {
+        "noise_sigma": 0.1,
+        "jitter_samples": 10,
+        "channel_dropout_p": 0.1
+      },
+      "cv": {
+        "scheme": "loso",
+        "num_subjects": 6
+      },
+      "checkpoint": {
+        "keep_best_metric": "top5",
+        "keep_last": true
+      },
+      "log_every_n_steps": 5,
+      "eval_every_n_epochs": 1
+    },
+    "generation": {
+      "mode": "retrieval",
+      "sd": {
+        "hf_id": "stabilityai/sd-turbo",
+        "revision": null,
+        "torch_dtype": "float32",
+        "ip_adapter_hf_id": "h94/IP-Adapter",
+        "ip_adapter_subfolder": "models",
+        "ip_adapter_weight_name": "ip-adapter_sd15.bin",
+        "num_inference_steps": 1,
+        "guidance_scale": 0.0,
+        "image_size": 512
+      },
+      "retrieval": {
+        "index_type": "IndexFlatIP",
+        "top_k": 5,
+        "return_thumbnails": true
+      }
+    },
+    "inference": {
+      "backend": "torch",
+      "openvino_device": "AUTO:NPU,GPU,CPU",
+      "onnx_opset": 17
+    },
+    "ui": {
+      "framework": "streamlit",
+      "refresh_interval_ms": 100,
+      "theme": {
+        "bg": "#0a0f1e",
+        "accent": "#00d4ff",
+        "text": "#e6f1ff",
+        "surface": "#101830",
+        "surface_alpha": 0.6
+      },
+      "region_colors": {
+        "frontal": "#3b82f6",
+        "temporal": "#10b981",
+        "parietal": "#eab308",
+        "occipital": "#ef4444"
+      },
+      "region_to_channels": {
+        "frontal": [],
+        "temporal": [],
+        "parietal": [],
+        "occipital": []
+      },
+      "strings": {
+        "app_title": "Visual Cortex Reconstructor",
+        "panel_eeg": "Live EEG Signal",
+        "panel_recon": "AI Reconstructed Image",
+        "panel_truth": "Ground Truth",
+        "panel_umap": "Latent Space",
+        "panel_metrics": "Metrics",
+        "panel_fft": "Frequency Spectrum",
+        "warming_up": "Warming up generator\u2026",
+        "no_stream": "Waiting for EEG stream\u2026",
+        "generation_mode_label": "Generation Mode",
+        "mode_retrieval": "Retrieval",
+        "mode_sd_turbo": "SD-Turbo",
+        "metric_top1": "Top-1 Accuracy",
+        "metric_cosine": "Cosine Similarity",
+        "metric_latency": "End-to-end Latency",
+        "metric_confidence": "Confidence",
+        "metric_predicted_class": "Predicted Class"
+      }
+    }
+  },
+  "git_sha": "afb09d64c057ef8238bcd1efc225be8efb82f785",
+  "started_at": "2026-05-27 15:23:46",
+  "held_out_subject": 1
+}

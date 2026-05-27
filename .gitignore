@@ -31,6 +31,13 @@ results/*
 # Phase-3 plumbing-pass evidence is visible in git history.
 !results/sanity/
 !results/sanity/**
+# Synthetic LOSO summary — JSON only; never the binary checkpoints
+# or TensorBoard event files.
+!results/loso_synthetic/
+!results/loso_synthetic/**
+results/loso_synthetic/**/*.ckpt
+results/loso_synthetic/**/tensorboard/
+results/loso_synthetic/**/pip_freeze.txt
 logs/*
 !logs/.gitkeep
 

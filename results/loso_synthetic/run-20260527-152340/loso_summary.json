@@ -1,0 +1,41 @@
+{
+  "folds": [
+    {
+      "held_out_subject": 0,
+      "best_val_top1": 0.0,
+      "best_val_top5": 1.0,
+      "best_val_top10": NaN,
+      "best_val_cosine_mean": -0.011659946292638779,
+      "best_val_centroid_purity": 0.0,
+      "best_epoch": 0
+    },
+    {
+      "held_out_subject": 1,
+      "best_val_top1": 0.0,
+      "best_val_top5": 1.0,
+      "best_val_top10": NaN,
+      "best_val_cosine_mean": -0.04303809255361557,
+      "best_val_centroid_purity": 0.0,
+      "best_epoch": 0
+    },
+    {
+      "held_out_subject": 2,
+      "best_val_top1": 0.0,
+      "best_val_top5": 1.0,
+      "best_val_top10": NaN,
+      "best_val_cosine_mean": -0.13813330233097076,
+      "best_val_centroid_purity": 0.0,
+      "best_epoch": 0
+    }
+  ],
+  "top1_mean": 0.0,
+  "top1_std": 0.0,
+  "top5_mean": 1.0,
+  "top5_std": 0.0,
+  "top10_mean": NaN,
+  "top10_std": NaN,
+  "cosine_mean": -0.0642771137257417,
+  "cosine_std": 0.05377235635629264,
+  "centroid_purity_mean": 0.0,
+  "centroid_purity_std": 0.0
+}

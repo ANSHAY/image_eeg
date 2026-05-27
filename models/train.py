@@ -147,13 +147,18 @@ def _evaluate(
     z_eeg = np.concatenate(eeg_embs, axis=0).astype(np.float32)
     z_tgt = np.concatenate(target_embs, axis=0).astype(np.float32)
     y = np.asarray(true_labels, dtype=np.int64)
-    top_k = top_k_retrieval(z_eeg, image_bank, labels_bank, y, ks=(1, 5, 10))
+    # Clamp ks so the metric works on small banks (synthetic tests use
+    # one row per class; real data has 2000+ rows so this is a no-op).
+    bank_n = image_bank.shape[0]
+    requested_ks = (1, 5, 10)
+    feasible_ks = tuple(k for k in requested_ks if k <= bank_n)
+    top_k = top_k_retrieval(z_eeg, image_bank, labels_bank, y, ks=feasible_ks)
     sims = cosine_similarity_pairs(z_eeg, z_tgt)
     purity, _ = class_centroid_purity(z_eeg, y, image_bank, labels_bank)
     return {
-        "top1": top_k[1],
-        "top5": top_k[5],
-        "top10": top_k[10],
+        "top1": top_k.get(1, float("nan")),
+        "top5": top_k.get(5, float("nan")),
+        "top10": top_k.get(10, float("nan")),
         "cosine_mean": float(sims.mean()),
         "cosine_median": float(np.median(sims)),
         "centroid_purity": purity,
