@@ -1,0 +1,61 @@
+# Visual Cortex Reconstructor — pinned dependencies (Python 3.14)
+#
+# All versions verified available for Python 3.14 on 2026-05-27 via
+# `pip index versions <pkg>`. Hardware target: Intel Core Ultra 5 225H
+# (CPU + NPU, no dGPU, 32 GB RAM, Linux Arch). All packages are CPU-only.
+#
+# transformers is pinned to the latest 4.x tail rather than 5.x because
+# the spec targets `>=4.36` and CLIPModel / CLIPProcessor API stability
+# matters more than chasing the major bump. Revisit when training is
+# proven on the LOSO gate.
+#
+# huggingface-hub is intentionally NOT pinned — transformers/diffusers
+# resolve a compatible version transitively (transformers 4.57.6 wants
+# <1.0; pinning to 1.x conflicts).
+#
+# IP-Adapter is loaded via diffusers' built-in loader (`pipeline.load_ip_adapter`),
+# available from diffusers >= 0.24 — no standalone `ip_adapter` package needed.
+
+# CPU-only torch wheels (avoids 2+ GB of unused CUDA libraries).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- Core ML ---
+torch==2.12.0+cpu
+transformers==4.57.6
+diffusers==0.38.0
+accelerate==1.13.0
+safetensors==0.8.0rc0  # diffusers 0.38 requires >=0.8.0rc0; latest stable is still 0.7.0
+
+# --- EEG / signal processing ---
+pylsl==1.18.2
+mne==1.12.1
+scipy==1.17.1
+numpy==2.4.6
+
+# --- Evaluation & visualization ---
+matplotlib==3.10.9
+plotly==6.7.0
+scikit-learn==1.8.0
+umap-learn==0.5.12
+Pillow==12.2.0
+
+# --- Retrieval index ---
+faiss-cpu==1.14.2
+
+# --- Edge inference (Intel NPU / iGPU / CPU) ---
+openvino==2026.1.0
+
+# --- Demo UI ---
+streamlit==1.57.0
+
+# --- Config & utilities ---
+PyYAML==6.0.3
+pydantic==2.13.4
+tqdm==4.67.3
+rich==15.0.0
+
+# --- Logging / experiment tracking ---
+tensorboard==2.20.0
+
+# --- Test framework ---
+pytest==9.0.3
