@@ -6,7 +6,18 @@ A 0.5 s, 128-channel EEG trial is streamed over [LSL](https://github.com/sccn/la
 
 ## Status
 
-Phase 0 (bootstrap) in progress. See [docs/implementation_plan.md](docs/implementation_plan.md) §11 for the atomic checklist — the first unchecked `[ ]` is the next commit.
+| Phase | State | Tag |
+|---|---|---|
+| 0 — Bootstrap | complete | `v0.0-bootstrap` |
+| 1 — Virtual EEG Rig | complete | `v0.1-streaming` |
+| 2 — Preprocessing | complete | `v0.2-preprocessing` |
+| 3 — Encoder Training | **engineering complete**, real-data quality gate deferred (Spampinato unfetched) | `v0.3-training` |
+| 4 — Generation (retrieval + SD-Turbo) | **engineering complete**, SD integration smoke deferred (data-pack constrained) | `v0.4-generation` |
+| 5 — OpenVINO Edge | complete; 1.89× CPU-only speedup (NPU driver absent on dev box) | `v0.5-openvino` |
+| 6 — Streamlit Demo App | engineering complete; manual screenshot pending | — |
+| 7 — Capture & Polish | demo recording pending | (`v1.0-demo` to follow) |
+
+See [docs/implementation_plan.md](docs/implementation_plan.md) §11 for the atomic checklist and the precise list of deferred items.
 
 ## Hardware target
 
@@ -31,7 +42,9 @@ Then run the idempotent bootstrap:
 ./setup.sh
 ```
 
-This installs pinned dependencies (CPU-only torch, transformers 4.x, diffusers 0.38, OpenVINO 2026.1, …), downloads the EEG dataset (Spampinato primary, THINGS-EEG2 fallback) and the 40-class ImageNet stimulus subset, then runs a smoke-import check.
+This installs pinned dependencies (CPU-only torch, transformers 4.x, diffusers 0.38, OpenVINO 2026.1, …), attempts to download the EEG dataset (Spampinato primary, THINGS-EEG2 fallback) and the 40-class ImageNet stimulus subset, then runs a smoke-import check.
+
+Both downloads gracefully exit `1` when the source requires manual acknowledgment (Google Drive / OSF). When that happens, follow the printed instructions to fetch the dataset bundle manually and re-run.
 
 On Arch Linux, `pylsl` benefits from a system `liblsl` install:
 
@@ -43,22 +56,49 @@ If absent, pylsl falls back to its wheel-bundled library — works, but the syst
 
 ## Run
 
-Commands below land as their phases ship. Today only the env is bootstrapped.
-
 ```bash
 # Phase 1 — Virtual EEG rig (LSL streamer + receiver)
 .venv/bin/python -m streaming.lsl_streamer --speed 1.0
 .venv/bin/python -m streaming.lsl_receiver
 
-# Phase 2 — Offline preprocessing
+# Phase 2 — Offline preprocessing (requires the Spampinato bundle)
 .venv/bin/python -m preprocessing.run_pipeline
 
-# Phase 3 — Train the EEG → CLIP encoder
+# Phase 3 — Train the EEG → CLIP encoder (requires preprocessed data)
 .venv/bin/python -m models.train
 
-# Phase 6 — Demo app
+# Phase 4 — Retrieval generator + spot-check on held-out trials
+.venv/bin/python -m scripts.spot_check_retrieval --ckpt runs/<run-id>/fold_<sid>/best.ckpt
+
+# Phase 5 — OpenVINO bench
+.venv/bin/python -m scripts.bench_ov_vs_torch
+
+# Phase 6 — Demo app (two terminals)
+.venv/bin/python -m streaming.lsl_streamer --speed 1.0 &
 .venv/bin/streamlit run app/streamlit_app.py
 ```
+
+## Quality gates and current results
+
+| Gate | Target | Current | Source |
+|---|---|---|---|
+| `pytest -m "not integration"` | all pass | **113 / 113 pass** | continuous |
+| Overfit-100 sanity (Phase 3) | train top-1 ≥ 0.95 | **1.000** | [results/sanity/summary.json](results/sanity/summary.json) |
+| Synthetic LOSO end-to-end | clean run, no crashes | **3 folds × 5 epochs, completed** | [results/loso_synthetic/summary.json](results/loso_synthetic/summary.json) |
+| Real-data LOSO top-5 ≥ 30 % | Spec gate | ⏸ awaiting Spampinato | — |
+| OpenVINO speedup (median/median) | 2 – 5× | **1.89× CPU-only** (NPU driver absent) | [results/phase5_bench.json](results/phase5_bench.json) |
+| OpenVINO bit-exactness vs torch | atol 1e-3 over 100 trials | **passes** (max diff 2.98e-8) | tests/test_openvino_export.py |
+| End-to-end latency (retrieval mode) | p95 < 2 s | **p95 = 167.7 ms, median 51.9 ms** | [results/phase6_e2e/summary.json](results/phase6_e2e/summary.json) |
+| End-to-end latency (SD-Turbo mode) | p95 < 60 s | ⏸ awaiting SD-Turbo cache | — |
+| Demo screen-capture (60 s) | recorded | ⏸ awaiting manual run | — |
+
+## Deferred items (resume tomorrow)
+
+1. **Spampinato dataset fetch** — manual Google Drive download. Downloaders print step-by-step instructions; re-run `setup.sh` after placing the `.pth` file under `data/raw/spampinato/`.
+2. **Full LOSO training** (Phase 3 quality gate). `.venv/bin/python -m models.train` once data is in place.
+3. **SD-Turbo integration smoke** (Phase 4B). Resume the paused download: `pytest -m integration tests/test_sd_generator.py`. ~3-4 GB of partial blobs are already in `~/.cache/huggingface/hub/models--stabilityai--sd-turbo/`.
+4. **Spot-check + comparison grids** (Phase 4A/4B). `scripts/spot_check_retrieval.py` and `scripts/compare_generators.py` are CLI-driven; pass `--ckpt path/to/best.ckpt`.
+5. **Manual demo recording** (Phase 7). Run the two-terminal command above, record 60 s with OBS or `wf-recorder` on Wayland.
 
 ## Architecture
 
@@ -68,16 +108,28 @@ See [docs/knowledge_graph.md](docs/knowledge_graph.md) for the architecture diag
 
 All runtime parameters — paths, model IDs, hyperparameters, UI strings, colors, filter cutoffs — live in [config.yaml](config.yaml). Code never references literal values; the [`utils.config`](utils/config.py) loader returns a frozen, pydantic-validated `Config` object, and `tests/test_no_magic_strings.py` enforces this in CI.
 
-## Results
+To run with a different config (subprocess tests do this), set `VCR_CONFIG=/path/to/alt.yaml` or pass `path=` to `load_config()`.
 
-To be populated once Phase 3 completes the LOSO-CV training run. Ship gates:
+## Repository layout
 
-| Metric | Target |
-|---|---|
-| Top-5 retrieval (LOSO held-out) | ≥ 50% |
-| Qualitative semantic match | ≥ 70% of 20-sample manual review |
-| End-to-end latency (SD-Turbo) | < 60 s |
-| End-to-end latency (retrieval) | < 2 s |
+```
+.
+├── config.yaml                 # single source of truth for every param
+├── requirements.txt            # pinned deps (CPU torch via PyTorch CPU index)
+├── setup.sh                    # idempotent bootstrap (uses existing .venv/)
+├── utils/                      # config loader (pydantic), seed, logging
+├── data/                       # dataset + ImageNet stimulus downloaders
+├── preprocessing/              # data_loader, filters, ICA, CLIP-bank precompute
+├── streaming/                  # virtual LSL EEG rig + receiver
+├── models/                     # encoder, losses, dataset, training, ONNX/OV export
+├── generation/                 # retrieval (FAISS) + SD-Turbo + IP-Adapter
+├── evaluation/                 # top-K, cosine, centroid purity, UMAP/t-SNE/CM
+├── app/                        # Streamlit demo + components + theme
+├── scripts/                    # sanity / bench / spot-check / e2e drivers
+├── tests/                      # pytest suite + integration tests
+├── docs/                       # spec, implementation plan, knowledge graph
+└── results/                    # tracked JSON evidence (checkpoints gitignored)
+```
 
 ## License
 
