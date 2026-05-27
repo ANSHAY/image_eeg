@@ -1,0 +1,173 @@
+# Visual Cortex Reconstructor — single source of truth.
+# Every parameter the system uses must live here. Code references
+# values as `cfg.section.key`; literal values in source code are
+# enforced against by tests/test_no_magic_strings.py.
+
+project:
+  name: visual_cortex_reconstructor
+  seed: 42
+
+paths:
+  data_raw: data/raw
+  data_processed: data/processed
+  imagenet_stimuli: data/raw/imagenet_stimuli
+  spampinato: data/raw/spampinato
+  things_eeg2: data/raw/things_eeg2
+  imagenet_classes_file: data/imagenet_classes.json   # 40-class wnid list
+  checkpoints: checkpoints
+  results: results
+  runs: runs
+  logs: logs
+  tests_fixtures: tests/fixtures
+
+dataset:
+  primary:
+    name: spampinato
+    # Source for preprocessed Spampinato EEG-ImageNet release.
+    # Spec §Dataset points at perceivelab/eeg_visual_classification.
+    url: https://github.com/perceivelab/eeg_visual_classification
+    expected_subjects: 6
+    expected_classes: 40
+  fallback:
+    name: things_eeg2
+    url: https://osf.io/anp5v/
+    expected_subjects: 10
+    expected_classes: 1854
+
+eeg:
+  sample_rate_hz: 1000
+  num_channels: 128
+  trial_length_samples: 500
+  powerline_hz: 50    # 60 in US
+
+preprocessing:
+  bandpass:
+    low_hz: 1
+    high_hz: 75
+    order: 4
+  notch:
+    quality_factor: 30
+  crop:
+    start_sample: 50
+    end_sample: 450
+  use_ica: false
+  ica_components: 20
+
+streaming:
+  outlet_name: EEG_VirtualRig
+  outlet_type: EEG
+  source_id: virtual_rig_001
+  marker_outlet_name: EEG_VirtualRig_Markers
+  marker_outlet_type: Markers
+  marker_source_id: virtual_rig_markers_001
+  channel_format: float32
+  default_speed: 1.0
+  chunk_size: 1   # samples per push; 1 = sample-by-sample real time
+  resolve_timeout_s: 5.0
+
+models:
+  clip:
+    hf_id: openai/clip-vit-base-patch32
+    revision: null    # pin to a SHA after first successful load
+    embed_dim: 512
+    image_size: 224
+  encoder:
+    spatial_out: 64
+    temporal_channels: [128, 128, 128]
+    temporal_kernel: 5
+    temporal_stride: 2
+    dropout: 0.3
+    head_dropout: 0.5
+    pool_size: 16
+    proj_hidden: 1024
+
+training:
+  batch_size: 128
+  epochs: 200
+  num_workers: 0    # CPU: keep main-thread to avoid pickle overhead
+  optimizer:
+    name: adamw
+    lr: 3.0e-4
+    weight_decay: 1.0e-4
+    betas: [0.9, 0.999]
+  scheduler:
+    name: cosine_warm_restarts
+    T_0: 10
+    T_mult: 2
+  loss:
+    info_nce_weight: 0.7
+    mse_weight: 0.3
+    temperature_init: 0.07
+    temperature_max: 100.0
+  augment:
+    noise_sigma: 0.1
+    jitter_samples: 10
+    channel_dropout_p: 0.10
+  cv:
+    scheme: loso
+    num_subjects: 6
+  checkpoint:
+    keep_best_metric: top5
+    keep_last: true
+  log_every_n_steps: 20
+  eval_every_n_epochs: 1
+
+generation:
+  mode: retrieval    # retrieval | sd_turbo
+  sd:
+    hf_id: stabilityai/sd-turbo
+    revision: null
+    torch_dtype: float32   # float32 | bfloat16
+    ip_adapter_hf_id: h94/IP-Adapter
+    ip_adapter_subfolder: models
+    ip_adapter_weight_name: ip-adapter_sd15.bin
+    num_inference_steps: 1
+    guidance_scale: 0.0
+    image_size: 512
+  retrieval:
+    index_type: IndexFlatIP
+    top_k: 5
+    return_thumbnails: true
+
+inference:
+  backend: torch     # torch | openvino
+  openvino_device: "AUTO:NPU,GPU,CPU"
+  onnx_opset: 17
+
+ui:
+  framework: streamlit
+  refresh_interval_ms: 100
+  theme:
+    bg: "#0a0f1e"
+    accent: "#00d4ff"
+    text: "#e6f1ff"
+    surface: "#101830"
+    surface_alpha: 0.6
+  region_colors:
+    frontal: "#3b82f6"
+    temporal: "#10b981"
+    parietal: "#eab308"
+    occipital: "#ef4444"
+  region_to_channels:    # populated in Phase 6 with the Biosemi 128 layout
+    frontal: []
+    temporal: []
+    parietal: []
+    occipital: []
+  strings:
+    app_title: "Visual Cortex Reconstructor"
+    panel_eeg: "Live EEG Signal"
+    panel_recon: "AI Reconstructed Image"
+    panel_truth: "Ground Truth"
+    panel_umap: "Latent Space"
+    panel_metrics: "Metrics"
+    panel_fft: "Frequency Spectrum"
+    warming_up: "Warming up generator…"
+    no_stream: "Waiting for EEG stream…"
+    generation_mode_label: "Generation Mode"
+    mode_retrieval: "Retrieval"
+    mode_sd_turbo: "SD-Turbo"
+    metric_top1: "Top-1 Accuracy"
+    metric_cosine: "Cosine Similarity"
+    metric_latency: "End-to-end Latency"
+    metric_confidence: "Confidence"
+    metric_predicted_class: "Predicted Class"
