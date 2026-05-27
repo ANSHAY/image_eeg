@@ -40,6 +40,9 @@ results/loso_synthetic/**/tensorboard/
 results/loso_synthetic/**/pip_freeze.txt
 # Phase 5 benchmark JSON.
 !results/phase5_bench.json
+# Phase 6 end-to-end smoke summary.
+!results/phase6_e2e/
+!results/phase6_e2e/**
 logs/*
 !logs/.gitkeep
 
