@@ -38,6 +38,8 @@ results/*
 results/loso_synthetic/**/*.ckpt
 results/loso_synthetic/**/tensorboard/
 results/loso_synthetic/**/pip_freeze.txt
+# Phase 5 benchmark JSON.
+!results/phase5_bench.json
 logs/*
 !logs/.gitkeep
 

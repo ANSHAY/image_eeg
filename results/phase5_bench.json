@@ -1,0 +1,30 @@
+{
+  "num_trials": 1000,
+  "warmup": 50,
+  "input_shape": [
+    1,
+    128,
+    400
+  ],
+  "openvino_device": "AUTO:NPU,GPU,CPU",
+  "torch": {
+    "n": 1000,
+    "mean_ms": 3.8989021449015127,
+    "median_ms": 1.2608410033863038,
+    "p95_ms": 6.2744370006839745,
+    "min_ms": 0.7313570022233762,
+    "max_ms": 145.1234980049776
+  },
+  "openvino": {
+    "n": 1000,
+    "mean_ms": 0.6894200980023015,
+    "median_ms": 0.6670570001006126,
+    "p95_ms": 0.9886150000966154,
+    "min_ms": 0.33857500238809735,
+    "max_ms": 3.877310999087058
+  },
+  "speedup_median": 1.8901548191475845,
+  "gate_target_min": 2.0,
+  "gate_target_max": 5.0,
+  "gate_met": false
+}
