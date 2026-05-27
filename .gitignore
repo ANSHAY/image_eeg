@@ -27,6 +27,10 @@ runs/*
 !runs/.gitkeep
 results/*
 !results/.gitkeep
+# Sanity-check artifacts are small JSON; keep them tracked so the
+# Phase-3 plumbing-pass evidence is visible in git history.
+!results/sanity/
+!results/sanity/**
 logs/*
 !logs/.gitkeep
 
