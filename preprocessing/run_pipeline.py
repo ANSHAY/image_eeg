@@ -45,6 +45,7 @@ log = get_logger(__name__)
 _EEG_OUT = "eeg_trials.npy"
 _LABELS_OUT = "labels.npy"
 _TARGETS_OUT = "image_emb_targets.npy"
+_SUBJECTS_OUT = "subject_ids.npy"
 _HPARAMS_OUT = "preprocess_hparams.json"
 _IMAGE_BANK_FILENAME = "clip_image_emb.npy"
 
@@ -92,7 +93,7 @@ def run(cfg: Optional[Config] = None) -> dict:
     ica_cleaner = _maybe_fit_ica(raw_stack, cfg)
     pipeline = Pipeline(cfg=cfg, ica_cleaner=ica_cleaner)
 
-    eeg_out, labels_out, targets_out = [], [], []
+    eeg_out, labels_out, targets_out, subjects_out = [], [], [], []
     missing = 0
     for t in tqdm(trials, desc="preprocess"):
         try:
@@ -103,6 +104,7 @@ def run(cfg: Optional[Config] = None) -> dict:
         eeg_out.append(pipeline(t.eeg_data))
         labels_out.append(t.label)
         targets_out.append(emb_bank[target_idx])
+        subjects_out.append(t.subject_id)
 
     if missing:
         log.warning("%d trials had no matching image in the CLIP bank — dropped", missing)
@@ -110,12 +112,14 @@ def run(cfg: Optional[Config] = None) -> dict:
     eeg_arr = np.stack(eeg_out).astype(np.float32)
     labels_arr = np.asarray(labels_out, dtype=np.int64)
     targets_arr = np.stack(targets_out).astype(np.float32)
+    subjects_arr = np.asarray(subjects_out, dtype=np.int64)
 
     out_dir = Path(cfg.paths.data_processed)
     out_dir.mkdir(parents=True, exist_ok=True)
     np.save(out_dir / _EEG_OUT, eeg_arr)
     np.save(out_dir / _LABELS_OUT, labels_arr)
     np.save(out_dir / _TARGETS_OUT, targets_arr)
+    np.save(out_dir / _SUBJECTS_OUT, subjects_arr)
 
     import json
     (out_dir / _HPARAMS_OUT).write_text(
@@ -126,6 +130,7 @@ def run(cfg: Optional[Config] = None) -> dict:
         "eeg_shape": list(eeg_arr.shape),
         "labels_shape": list(labels_arr.shape),
         "targets_shape": list(targets_arr.shape),
+        "subjects_shape": list(subjects_arr.shape),
         "dropped_missing_image": missing,
         "output_dir": str(out_dir),
     }
