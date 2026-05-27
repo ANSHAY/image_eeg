@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual env (user-provisioned, not tracked)
+.venv/
+venv/
+env/
+
+# Data + generated artifacts (keep .gitkeep, ignore everything else)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+runs/*
+!runs/.gitkeep
+results/*
+!results/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Media (demo recordings)
+*.mp4
+*.mov
+*.webm
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Notebook scratch
+.ipynb_checkpoints/
+
+# Local config overrides (kept out of VCS; canonical config.yaml is tracked)
+config.local.yaml
+*.env
+.env
