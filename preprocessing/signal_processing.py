@@ -186,3 +186,99 @@ class ICACleaner:
 
     def fit_transform(self, batch: np.ndarray) -> np.ndarray:
         return self.fit(batch).transform(batch)
+
+
+class Pipeline:
+    """Fixed-order EEG denoising pipeline.
+
+    Order (not user-configurable — steps have known interactions):
+
+        bandpass → notch → [ICA?] → baseline_correct → zscore → temporal_crop
+
+    Bandpass/notch run first so baseline correction doesn't smear DC into
+    the passband. ICA assumes bandpass-cleaned data. Baseline correction
+    and z-score normalize per-channel before the model. Cropping happens
+    last so the filter transients on the trial edges are discarded.
+
+    If ``cfg.preprocessing.use_ica`` is true, an ``ICACleaner`` must be
+    supplied (the caller is responsible for fitting it on a representative
+    training batch). The Pipeline does not fit ICA itself — ICA fitting
+    requires multi-trial input while ``__call__`` accepts a single trial.
+    """
+
+    STEP_ORDER: tuple[str, ...] = (
+        "bandpass",
+        "notch",
+        "ica",
+        "baseline_correct",
+        "zscore",
+        "temporal_crop",
+    )
+
+    def __init__(
+        self,
+        cfg: Optional[Config] = None,
+        ica_cleaner: Optional[ICACleaner] = None,
+    ) -> None:
+        self.cfg = _cfg(cfg)
+        self.ica_cleaner = ica_cleaner
+        if self.cfg.preprocessing.use_ica and ica_cleaner is None:
+            raise ValueError(
+                "cfg.preprocessing.use_ica is true but no ICACleaner was supplied. "
+                "Fit an ICACleaner on a training batch and pass it as ica_cleaner=.",
+            )
+        if not self.cfg.preprocessing.use_ica and ica_cleaner is not None:
+            _log.warning(
+                "Pipeline received an ICACleaner but use_ica=false; ignoring it.",
+            )
+            self.ica_cleaner = None
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """Apply the pipeline to a single trial of shape (channels, samples)."""
+        x = bandpass(x, self.cfg)
+        x = notch(x, self.cfg)
+        if self.ica_cleaner is not None:
+            x = self.ica_cleaner.transform(x)
+        x = baseline_correct(x)
+        x = zscore(x)
+        x = temporal_crop(x, self.cfg)
+        return x
+
+    def to_dict(self) -> dict:
+        """Serializable snapshot of the active configuration for run logs.
+
+        Includes the step order, the resolved cutoffs/thresholds, and the
+        ICA bad-component list when ICA is engaged. Stable across runs of
+        the same config — diff two ``to_dict()`` outputs to spot
+        preprocessing drift between experiments.
+        """
+        p = self.cfg.preprocessing
+        eeg = self.cfg.eeg
+        snapshot: dict = {
+            "order": list(self.STEP_ORDER),
+            "bandpass": {
+                "low_hz": p.bandpass.low_hz,
+                "high_hz": p.bandpass.high_hz,
+                "order": p.bandpass.order,
+                "fs_hz": eeg.sample_rate_hz,
+            },
+            "notch": {
+                "freq_hz": eeg.powerline_hz,
+                "quality_factor": p.notch.quality_factor,
+            },
+            "baseline_correct": {"axis": "time"},
+            "zscore": {"axis": "time", "eps": _ZSCORE_EPS},
+            "temporal_crop": {
+                "start_sample": p.crop.start_sample,
+                "end_sample": p.crop.end_sample,
+            },
+            "ica": {
+                "enabled": p.use_ica,
+                "n_components": p.ica_components,
+                "kurtosis_threshold": p.ica_kurtosis_threshold,
+            },
+        }
+        if self.ica_cleaner is not None:
+            snapshot["ica"]["bad_components"] = list(self.ica_cleaner.bad_components)
+            snapshot["ica"]["fitted"] = self.ica_cleaner._fitted
+        return snapshot
