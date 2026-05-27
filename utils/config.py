@@ -111,6 +111,7 @@ class CLIPModel(_Frozen):
     revision: Optional[str] = None
     embed_dim: int
     image_size: int
+    embed_batch_size: int
 
 
 class EncoderArch(_Frozen):

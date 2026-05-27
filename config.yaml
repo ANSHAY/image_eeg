@@ -89,6 +89,7 @@ models:
     revision: null    # pin to a SHA after first successful load
     embed_dim: 512
     image_size: 224
+    embed_batch_size: 32
   encoder:
     spatial_out: 64
     temporal_channels: [128, 128, 128]
