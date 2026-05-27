@@ -6,12 +6,15 @@ rather than literals (enforced by `tests/test_no_magic_strings.py`).
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+_CONFIG_ENV_VAR = "VCR_CONFIG"
 
 
 class _Frozen(BaseModel):
@@ -283,12 +286,15 @@ def _default_config_path() -> Path:
 def load_config(path: Optional[str] = None) -> Config:
     """Load and validate `config.yaml`. Cached by path string.
 
-    Args:
-        path: Optional override. If None, reads `<project_root>/config.yaml`.
+    Resolution order: explicit ``path`` argument > ``VCR_CONFIG`` env
+    variable > ``<project_root>/config.yaml``. The env var lets tests
+    point subprocesses at a tmp config without modifying argv.
 
     Returns:
         Frozen, type-checked Config instance.
     """
+    if path is None:
+        path = os.environ.get(_CONFIG_ENV_VAR)
     p = Path(path) if path is not None else _default_config_path()
     with p.open("r", encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
