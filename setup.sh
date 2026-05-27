@@ -40,10 +40,18 @@ log "installing pinned dependencies (pip skips already-installed)"
 mkdir -p data/raw data/processed checkpoints runs results logs
 
 log "running dataset downloader (Spampinato primary, THINGS-EEG2 fallback)"
-.venv/bin/python -m data.download_dataset
+# A non-zero exit means a manual fetch is required (most EEG datasets gate
+# downloads behind a Google Drive / OSF acknowledgment). That's expected
+# on first run — log a warning and keep going so the smoke import check
+# still runs.
+if ! .venv/bin/python -m data.download_dataset; then
+  warn "EEG dataset not auto-fetched. See instructions above and re-run when ready."
+fi
 
 log "running ImageNet stimuli downloader (40-class subset)"
-.venv/bin/python -m data.download_imagenet
+if ! .venv/bin/python -m data.download_imagenet; then
+  warn "ImageNet stimuli not auto-fetched. See instructions above and re-run when ready."
+fi
 
 # --- 5. Smoke import check --------------------------------------------------
 log "verifying core imports"
