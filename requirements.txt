@@ -44,6 +44,10 @@ faiss-cpu==1.14.2
 
 # --- Edge inference (Intel NPU / iGPU / CPU) ---
 openvino==2026.1.0
+# torch.onnx.export uses the modern dynamo-based exporter which requires
+# onnxscript and the onnx runtime library.
+onnxscript==0.7.0
+onnx==1.21.0
 
 # --- Demo UI ---
 streamlit==1.57.0
