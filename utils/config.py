@@ -46,9 +46,17 @@ class DatasetSource(_Frozen):
     expected_classes: int
 
 
+class ImagenetStimuli(_Frozen):
+    bundled_archive_name: str
+    landing_url: str
+    download_url: Optional[str] = None
+    expected_extension: str
+
+
 class Dataset(_Frozen):
     primary: DatasetSource
     fallback: DatasetSource
+    imagenet_stimuli: ImagenetStimuli
 
 
 class EEG(_Frozen):

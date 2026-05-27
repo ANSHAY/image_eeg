@@ -39,6 +39,14 @@ dataset:
     expected_filename: things-eeg2_preprocessed.zip
     expected_subjects: 10
     expected_classes: 1854
+  imagenet_stimuli:
+    # The Spampinato bundle typically ships an images archive alongside
+    # the EEG .pth — point `bundled_archive_name` at it and the downloader
+    # will extract instead of fetching.
+    bundled_archive_name: images.zip
+    landing_url: https://www.image-net.org/
+    download_url: null
+    expected_extension: .JPEG
 
 eeg:
   sample_rate_hz: 1000
