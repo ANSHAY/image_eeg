@@ -66,6 +66,10 @@ preprocessing:
     end_sample: 450
   use_ica: false
   ica_components: 20
+  # Components whose source time-course kurtosis exceeds this threshold are
+  # excluded by ICACleaner — high-kurtosis sources typically correspond to
+  # eye blinks (EOG) or muscle bursts (EMG).
+  ica_kurtosis_threshold: 5.0
 
 streaming:
   outlet_name: EEG_VirtualRig

@@ -15,10 +15,14 @@ from typing import Optional
 
 import numpy as np
 from scipy import signal as scipy_signal
+from scipy.stats import kurtosis
 
 from utils.config import Config, load_config
+from utils.logging import get_logger
 
 _ZSCORE_EPS = 1e-8
+
+_log = get_logger(__name__)
 
 
 def _cfg(cfg: Optional[Config]) -> Config:
@@ -84,3 +88,101 @@ def temporal_crop(x: np.ndarray, cfg: Optional[Config] = None) -> np.ndarray:
             f"crop window [{start}:{end}] is invalid for input length {x.shape[-1]}",
         )
     return x[..., start:end]
+
+
+class ICACleaner:
+    """ICA-based artifact removal — toggled by ``cfg.preprocessing.use_ica``.
+
+    Fit once on a representative batch of trials (training subjects),
+    then apply to single trials at inference time. Bad-component
+    detection is heuristic: components whose source time-course
+    kurtosis exceeds ``cfg.preprocessing.ica_kurtosis_threshold`` are
+    excluded — high-kurtosis sources typically correspond to EOG (eye
+    blinks) or EMG (muscle) bursts that the bandpass cannot reach.
+
+    Lazy-imports ``mne`` to keep the dependency cost off the hot path
+    when ICA is disabled.
+    """
+
+    def __init__(self, cfg: Optional[Config] = None) -> None:
+        self.cfg = _cfg(cfg)
+        self._ica: object | None = None
+        self._info: object | None = None
+        self._fitted: bool = False
+        self.bad_components: list[int] = []
+
+    def _make_info(self, n_channels: int):
+        from mne import create_info
+
+        return create_info(
+            ch_names=[f"ch_{i}" for i in range(n_channels)],
+            sfreq=float(self.cfg.eeg.sample_rate_hz),
+            ch_types="eeg",
+            verbose=False,
+        )
+
+    def fit(self, batch: np.ndarray) -> "ICACleaner":
+        """Fit ICA on a (n_trials, n_channels, n_samples) batch.
+
+        Returns self for chaining.
+        """
+        if batch.ndim != 3:
+            raise ValueError(
+                f"fit expects (trials, channels, samples), got shape {batch.shape}",
+            )
+        from mne import EpochsArray
+        from mne.preprocessing import ICA
+
+        self._info = self._make_info(batch.shape[1])
+        epochs = EpochsArray(batch.astype(np.float64), self._info, verbose=False)
+        self._ica = ICA(
+            n_components=self.cfg.preprocessing.ica_components,
+            random_state=self.cfg.project.seed,
+            method="fastica",
+            max_iter="auto",
+            verbose=False,
+        )
+        self._ica.fit(epochs, verbose=False)
+        self._fitted = True
+        self.bad_components = self._find_bad_components(epochs)
+        self._ica.exclude = list(self.bad_components)
+        _log.info(
+            "ICA fit on %d trials × %d ch; %d/%d components excluded "
+            "(kurtosis > %.1f)",
+            batch.shape[0], batch.shape[1],
+            len(self.bad_components), self.cfg.preprocessing.ica_components,
+            self.cfg.preprocessing.ica_kurtosis_threshold,
+        )
+        return self
+
+    def _find_bad_components(self, epochs) -> list[int]:
+        sources = self._ica.get_sources(epochs).get_data()
+        # sources shape: (n_epochs, n_components, n_samples)
+        # average |kurtosis| across epochs per component
+        per_epoch = kurtosis(sources, axis=-1, fisher=True)
+        mean_abs_kurt = np.abs(per_epoch).mean(axis=0)
+        threshold = self.cfg.preprocessing.ica_kurtosis_threshold
+        return [int(i) for i, k in enumerate(mean_abs_kurt) if k > threshold]
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Apply trained ICA, removing excluded components. Accepts a
+        single trial (channels, samples) or a batch (trials, ch, samples)."""
+        if not self._fitted or self._ica is None:
+            raise RuntimeError("ICACleaner.transform called before fit")
+        from mne import EpochsArray
+
+        single = x.ndim == 2
+        if single:
+            x = x[np.newaxis]
+        elif x.ndim != 3:
+            raise ValueError(
+                f"transform expects (channels, samples) or (trials, ch, samples), got {x.shape}",
+            )
+        epochs = EpochsArray(x.astype(np.float64), self._info, verbose=False)
+        cleaned = self._ica.apply(epochs.copy(), verbose=False).get_data()
+        if single:
+            cleaned = cleaned[0]
+        return cleaned.astype(x.dtype if x.dtype == np.float32 else np.float32, copy=False)
+
+    def fit_transform(self, batch: np.ndarray) -> np.ndarray:
+        return self.fit(batch).transform(batch)

@@ -90,6 +90,7 @@ class Preprocessing(_Frozen):
     crop: Crop
     use_ica: bool
     ica_components: int
+    ica_kurtosis_threshold: float
 
 
 class Streaming(_Frozen):
