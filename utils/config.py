@@ -39,7 +39,9 @@ class Paths(_Frozen):
 
 class DatasetSource(_Frozen):
     name: str
-    url: str
+    landing_url: str
+    download_url: Optional[str] = None
+    expected_filename: str
     expected_subjects: int
     expected_classes: int
 

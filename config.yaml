@@ -23,14 +23,20 @@ paths:
 dataset:
   primary:
     name: spampinato
-    # Source for preprocessed Spampinato EEG-ImageNet release.
+    # Landing page with manual download instructions and license.
     # Spec §Dataset points at perceivelab/eeg_visual_classification.
-    url: https://github.com/perceivelab/eeg_visual_classification
+    landing_url: https://github.com/perceivelab/eeg_visual_classification
+    # Direct-download URL if/when available (e.g. a mirror). null = manual fetch required.
+    download_url: null
+    # File the downloader looks for to declare "already present".
+    expected_filename: eeg_signals_raw_with_mean_std.pth
     expected_subjects: 6
     expected_classes: 40
   fallback:
     name: things_eeg2
-    url: https://osf.io/anp5v/
+    landing_url: https://osf.io/anp5v/
+    download_url: null
+    expected_filename: things-eeg2_preprocessed.zip
     expected_subjects: 10
     expected_classes: 1854
 
