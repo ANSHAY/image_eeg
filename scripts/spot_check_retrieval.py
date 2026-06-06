@@ -124,12 +124,8 @@ def main() -> int:
         with torch.no_grad():
             z = model(eeg).cpu().numpy()[0]
         top = retriever.generate(z)
-        gt_path = ds.cfg.paths.imagenet_stimuli
-        # Ground-truth image is the bank entry whose label matches.
-        # The dataset doesn't keep the image_path of each trial after preprocess,
-        # so use the placeholder as ground truth too — visually equivalent until
-        # the user fetches the stimulus zip.
-        gt_img = retriever._placeholder(f"true class {true_label}")
+        gt_idx = int(np.where(retriever.labels == true_label)[0][0])
+        gt_img = retriever._load_image(retriever.paths[gt_idx])
         match = (top["label"] == true_label)
         hits += int(match)
         records.append(

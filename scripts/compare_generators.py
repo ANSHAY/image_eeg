@@ -131,7 +131,8 @@ def main() -> int:
     rows = []
     records = []
     for trial_idx, true_label, ret, sd_img in zip(chosen, truths, retrieved, sd_images):
-        gt = retriever._placeholder(f"true class {true_label}")
+        gt_idx = int(np.where(retriever.labels == true_label)[0][0])
+        gt = retriever._load_image(retriever.paths[gt_idx])
         label = (
             f"[trial {trial_idx}]  true={true_label}  ret={ret['label']}  "
             f"sim={ret['score']:.3f}"

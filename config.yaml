@@ -137,13 +137,13 @@ training:
 generation:
   mode: retrieval    # retrieval | sd_turbo
   sd:
-    hf_id: stabilityai/sd-turbo
+    hf_id: runwayml/stable-diffusion-v1-5
     revision: null
     torch_dtype: float32   # float32 | bfloat16
     ip_adapter_hf_id: h94/IP-Adapter
     ip_adapter_subfolder: models
     ip_adapter_weight_name: ip-adapter_sd15.bin
-    num_inference_steps: 1
+    num_inference_steps: 20
     guidance_scale: 0.0
     image_size: 512
   retrieval:
