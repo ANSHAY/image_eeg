@@ -128,6 +128,14 @@ class SpampinatoLoader:
             if hasattr(eeg, "numpy"):
                 eeg = eeg.numpy()
             eeg = np.asarray(eeg, dtype=np.float32)
+            
+            expected_samples = self.cfg.eeg.trial_length_samples
+            if eeg.shape[1] > expected_samples:
+                eeg = eeg[:, :expected_samples]
+            elif eeg.shape[1] < expected_samples:
+                pad_width = expected_samples - eeg.shape[1]
+                eeg = np.pad(eeg, ((0, 0), (0, pad_width)), mode="constant")
+                
             label_idx = int(rec["label"])
             image_idx = int(rec["image"])
             image_file = image_files[image_idx] if image_files else f"img_{image_idx}.jpg"
@@ -162,6 +170,14 @@ class SpampinatoLoader:
         trials: list[Trial] = []
         for tid, rec in enumerate(records):
             eeg = np.asarray(rec.eeg, dtype=np.float32)
+            
+            expected_samples = self.cfg.eeg.trial_length_samples
+            if eeg.shape[1] > expected_samples:
+                eeg = eeg[:, :expected_samples]
+            elif eeg.shape[1] < expected_samples:
+                pad_width = expected_samples - eeg.shape[1]
+                eeg = np.pad(eeg, ((0, 0), (0, pad_width)), mode="constant")
+                
             label_idx = int(rec.label)
             image_idx = int(rec.image)
             image_file = (
