@@ -87,8 +87,15 @@ def compile_openvino(onnx_path: Path, cfg: Optional[Config] = None):
         "available OpenVINO devices: %s; requesting %s",
         core.available_devices, c.inference.openvino_device,
     )
+    ov_model = core.read_model(model=str(onnx_path))
+    
+    # Save the IR files (.xml and .bin)
+    xml_path = onnx_path.with_suffix(".xml")
+    ov.save_model(ov_model, str(xml_path))
+    log.info("Saved OpenVINO IR to %s", xml_path)
+    
     compiled = core.compile_model(
-        model=str(onnx_path),
+        model=ov_model,
         device_name=c.inference.openvino_device,
     )
     log.info("compiled OK on device family: %s", compiled.get_property("EXECUTION_DEVICES"))
@@ -125,3 +132,27 @@ class OpenVINOEncoder:
         export_to_onnx(model, onnx_path, cfg=cfg)
         compiled = compile_openvino(onnx_path, cfg=cfg)
         return cls(compiled, cfg=cfg)
+
+
+if __name__ == "__main__":
+    import argparse
+    from models.eeg_encoder import EEGEncoder
+
+    parser = argparse.ArgumentParser(description="Export PyTorch checkpoint to OpenVINO")
+    parser.add_argument("--ckpt", type=str, required=True, help="Path to best.ckpt or last.ckpt")
+    parser.add_argument("--out", type=str, default=None, help="Output ONNX path (optional)")
+    args = parser.parse_args()
+
+    cfg = load_config()
+    log.info("loading checkpoint: %s", args.ckpt)
+    state = torch.load(args.ckpt, map_location="cpu", weights_only=True)
+    
+    # Init model and load weights
+    model = EEGEncoder(cfg=cfg)
+    model.load_state_dict(state["model"])
+    
+    out_path = Path(args.out) if args.out else Path(args.ckpt).parent / "encoder.onnx"
+    
+    # Export & Compile
+    ov_encoder = OpenVINOEncoder.from_torch(model, out_path, cfg=cfg)
+    log.info("export complete! ONNX saved to %s", out_path)

@@ -154,7 +154,7 @@ generation:
 inference:
   backend: torch     # torch | openvino
   openvino_device: "AUTO:NPU,GPU,CPU"
-  onnx_opset: 17
+  onnx_opset: 18
 
 ui:
   framework: streamlit
