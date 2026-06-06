@@ -84,10 +84,16 @@ class EEGEncoder(nn.Module):
 
         # Pointwise channel-mixer — learns linear combinations of the
         # raw 128 electrodes before any temporal feature extraction.
-        self.spatial = nn.Conv1d(
-            in_channels=c.eeg.num_channels,
-            out_channels=enc.spatial_out,
-            kernel_size=1,
+        self.spatial = nn.Sequential(
+            nn.Conv1d(
+                in_channels=c.eeg.num_channels,
+                out_channels=enc.spatial_out,
+                kernel_size=1,
+                bias=False,
+            ),
+            nn.BatchNorm1d(enc.spatial_out),
+            nn.GELU(),
+            nn.Dropout(enc.dropout),
         )
 
         blocks: list[nn.Module] = []

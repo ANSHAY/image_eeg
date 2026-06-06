@@ -154,6 +154,9 @@ class Augment(_Frozen):
     noise_sigma: float
     jitter_samples: int
     channel_dropout_p: float
+    amplitude_scale: float
+    sign_flip_p: float
+    temporal_cutout_samples: int
 
 
 class CV(_Frozen):

@@ -89,3 +89,17 @@ def loso_split_indices(
     if len(val_idx) == 0:
         raise ValueError(f"no trials for held-out subject {held_out}")
     return train_idx, val_idx
+
+
+def shuffled_split_indices(
+    total_samples: int, val_ratio: float = 0.2, seed: int = 42
+) -> tuple[np.ndarray, np.ndarray]:
+    """Indices for a globally shuffled train/val split.
+    
+    Returns:
+        (train_idx, val_idx)
+    """
+    indices = np.arange(total_samples)
+    np.random.default_rng(seed).shuffle(indices)
+    split = int(total_samples * (1.0 - val_ratio))
+    return indices[:split], indices[split:]

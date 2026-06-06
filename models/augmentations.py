@@ -84,6 +84,72 @@ class ChannelDropout:
         )
 
 
+class AmplitudeScale:
+    """Randomly scale amplitude for the whole trial by a factor."""
+
+    def __init__(self, scale_range: float) -> None:
+        self.scale_range = float(scale_range)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        if self.scale_range == 0:
+            return x
+        if x.ndim == 2:
+            scale = 1.0 + (torch.rand(1, device=x.device) * 2 - 1) * self.scale_range
+            return x * scale
+        if x.ndim == 3:
+            scale = 1.0 + (torch.rand(x.shape[0], 1, 1, device=x.device) * 2 - 1) * self.scale_range
+            return x * scale
+        return x
+
+
+class SignFlip:
+    """Randomly flip the sign of the whole trial with probability p."""
+
+    def __init__(self, p: float) -> None:
+        self.p = float(p)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        if self.p == 0:
+            return x
+        if x.ndim == 2:
+            sign = 1.0 if torch.rand(1).item() > self.p else -1.0
+            return x * sign
+        if x.ndim == 3:
+            sign = torch.ones(x.shape[0], 1, 1, device=x.device)
+            flip_mask = torch.rand(x.shape[0], device=x.device) < self.p
+            sign[flip_mask] = -1.0
+            return x * sign
+        return x
+
+
+class TemporalCutout:
+    """Zero out a random contiguous segment of time of max_samples length."""
+
+    def __init__(self, max_samples: int) -> None:
+        self.max_samples = int(max_samples)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        if self.max_samples <= 0:
+            return x
+        T = x.shape[-1]
+        if T <= self.max_samples:
+            return x
+        if x.ndim == 2:
+            length = torch.randint(1, self.max_samples + 1, (1,)).item()
+            start = torch.randint(0, T - length, (1,)).item()
+            x = x.clone()
+            x[..., start:start + length] = 0.0
+            return x
+        if x.ndim == 3:
+            x = x.clone()
+            for i in range(x.shape[0]):
+                length = torch.randint(1, self.max_samples + 1, (1,)).item()
+                start = torch.randint(0, T - length, (1,)).item()
+                x[i, ..., start:start + length] = 0.0
+            return x
+        return x
+
+
 class Compose:
     """Sequentially apply a list of callables."""
 
@@ -105,5 +171,8 @@ def make_train_augmentations(cfg: Optional[Config] = None) -> Compose:
             GaussianNoise(aug.noise_sigma),
             TemporalJitter(aug.jitter_samples),
             ChannelDropout(aug.channel_dropout_p),
+            AmplitudeScale(getattr(aug, "amplitude_scale", 0.0)),
+            SignFlip(getattr(aug, "sign_flip_p", 0.0)),
+            TemporalCutout(getattr(aug, "temporal_cutout_samples", 0)),
         ],
     )

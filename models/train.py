@@ -49,7 +49,7 @@ from evaluation.metrics import (
     top_k_retrieval,
 )
 from models.augmentations import make_train_augmentations
-from models.dataset import EEGDataset, loso_split_indices
+from models.dataset import EEGDataset, loso_split_indices, shuffled_split_indices
 from models.eeg_encoder import EEGEncoder
 from models.losses import ContrastiveAlignmentLoss
 from preprocessing.clip_embeddings import load_image_bank
@@ -323,15 +323,27 @@ def run_loso(
 
     folds_to_run = [held_out] if held_out is not None else unique_subjects
     fold_results: list[FoldResult] = []
-    for sid in folds_to_run:
-        train_idx, val_idx = loso_split_indices(subjects_all, sid)
+    
+    if cfg.training.cv.scheme == "shuffled":
+        log.info("using globally shuffled train/val split")
+        train_idx, val_idx = shuffled_split_indices(len(subjects_all), seed=cfg.project.seed)
         train_ds = EEGDataset(cfg=cfg, indices=train_idx, train_aug=make_train_augmentations(cfg))
         val_ds = EEGDataset(cfg=cfg, indices=val_idx)
         result = _train_one_fold(
-            cfg, run_dir, sid, train_ds, val_ds,
+            cfg, run_dir, None, train_ds, val_ds,
             image_bank, labels_bank, max_epochs=max_epochs, resume_from=resume_from,
         )
         fold_results.append(result)
+    else:
+        for sid in folds_to_run:
+            train_idx, val_idx = loso_split_indices(subjects_all, sid)
+            train_ds = EEGDataset(cfg=cfg, indices=train_idx, train_aug=make_train_augmentations(cfg))
+            val_ds = EEGDataset(cfg=cfg, indices=val_idx)
+            result = _train_one_fold(
+                cfg, run_dir, sid, train_ds, val_ds,
+                image_bank, labels_bank, max_epochs=max_epochs, resume_from=resume_from,
+            )
+            fold_results.append(result)
 
     summary = _summarize(fold_results)
     (run_dir / _LOSO_SUMMARY).write_text(json.dumps(summary, indent=2), encoding="utf-8")
