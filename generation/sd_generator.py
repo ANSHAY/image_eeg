@@ -44,6 +44,22 @@ _DTYPE_MAP = {
     "float16": torch.float16,
 }
 
+class MappingPrior(torch.nn.Module):
+    """Translates 512-dim OpenAI CLIP vectors to 1024-dim LAION CLIP vectors."""
+    def __init__(self, in_dim=512, out_dim=1024, hidden_dim=1024):
+        super().__init__()
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(in_dim, hidden_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_dim, hidden_dim),
+            torch.nn.GELU(),
+            torch.nn.Linear(hidden_dim, out_dim)
+        )
+        
+    def forward(self, x):
+        h = self.net(x)
+        return torch.nn.functional.normalize(h, dim=-1)
+
 
 class SDGenerator:
     """Lazy-loading SD-Turbo + IP-Adapter image generator."""
@@ -53,6 +69,7 @@ class SDGenerator:
         self._pipeline: object | None = None
         self._loaded: bool = False
         self._expected_embed_dim: Optional[int] = None
+        self._prior: Optional[MappingPrior] = None
 
     # --- lifecycle ----------------------------------------------------
 
@@ -89,6 +106,20 @@ class SDGenerator:
             subfolder=sd.ip_adapter_subfolder,
             weight_name=sd.ip_adapter_weight_name,
         )
+        
+        # Load the Mapping Prior if we are using 512-dim EEG features
+        if self.cfg.models.clip.embed_dim == 512:
+            import os
+            prior_path = "weights/mapping_prior.pt"
+            if os.path.exists(prior_path):
+                log.info("loading Mapping Prior to bridge 512-dim -> 1024-dim")
+                self._prior = MappingPrior()
+                self._prior.load_state_dict(torch.load(prior_path, map_location="cpu"))
+                self._prior.eval()
+                self._prior.to(self._pipeline.device, dtype=dtype)
+            else:
+                log.warning("Mapping Prior not found at %s! 512-dim generation will fail.", prior_path)
+
         self._pipeline.set_progress_bar_config(disable=True)
         self._loaded = True
 
@@ -97,6 +128,9 @@ class SDGenerator:
         if self._pipeline is not None:
             del self._pipeline
             self._pipeline = None
+        if self._prior is not None:
+            del self._prior
+            self._prior = None
         self._loaded = False
         gc.collect()
         log.info("SD pipeline unloaded")
@@ -121,8 +155,13 @@ class SDGenerator:
 
         sd = self.cfg.generation.sd
         try:
-            tensor = torch.from_numpy(z).to(_DTYPE_MAP.get(sd.torch_dtype, torch.float32))
-            # IP-Adapter expects a list of embed tensors (one per adapter).
+            tensor = torch.from_numpy(z).to(_DTYPE_MAP.get(sd.torch_dtype, torch.float32)).to(self._pipeline.device)
+            
+            # If using 512-dim, pipe it through our Mapping Prior to get the 1024-dim IP-Adapter vector
+            if self.cfg.models.clip.embed_dim == 512 and self._prior is not None:
+                with torch.no_grad():
+                    tensor = self._prior(tensor)
+            
             result = self._pipeline(
                 prompt=_DEFAULT_PROMPT,
                 num_inference_steps=sd.num_inference_steps,

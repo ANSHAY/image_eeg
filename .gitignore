@@ -10,6 +10,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+weights/
 
 # Virtual env (user-provisioned, not tracked)
 .venv/
