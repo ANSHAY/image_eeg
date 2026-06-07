@@ -57,8 +57,7 @@ class MappingPrior(torch.nn.Module):
         )
         
     def forward(self, x):
-        h = self.net(x)
-        return torch.nn.functional.normalize(h, dim=-1)
+        return self.net(x)
 
 
 class SDGenerator:
