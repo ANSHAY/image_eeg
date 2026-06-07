@@ -46,18 +46,21 @@ _DTYPE_MAP = {
 
 class MappingPrior(torch.nn.Module):
     """Translates 512-dim OpenAI CLIP vectors to 1024-dim LAION CLIP vectors."""
-    def __init__(self, in_dim=512, out_dim=1024, hidden_dim=1024):
+    def __init__(self, in_dim=512, out_dim=1024, hidden_dim=2048):
         super().__init__()
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(in_dim, hidden_dim),
-            torch.nn.GELU(),
-            torch.nn.Linear(hidden_dim, hidden_dim),
-            torch.nn.GELU(),
-            torch.nn.Linear(hidden_dim, out_dim)
-        )
+        self.fc1 = torch.nn.Linear(in_dim, hidden_dim)
+        self.ln1 = torch.nn.LayerNorm(hidden_dim)
+        self.fc2 = torch.nn.Linear(hidden_dim, hidden_dim)
+        self.ln2 = torch.nn.LayerNorm(hidden_dim)
+        self.fc3 = torch.nn.Linear(hidden_dim, out_dim)
+        self.dropout = torch.nn.Dropout(0.3)
+        self.act = torch.nn.GELU()
         
     def forward(self, x):
-        return self.net(x)
+        h1 = self.dropout(self.act(self.ln1(self.fc1(x))))
+        h2 = self.dropout(self.act(self.ln2(self.fc2(h1)))) + h1
+        out = self.fc3(h2)
+        return torch.nn.functional.normalize(out, dim=-1)
 
 
 class SDGenerator:
@@ -111,7 +114,7 @@ class SDGenerator:
             import os
             prior_path = "weights/mapping_prior.pt"
             if os.path.exists(prior_path):
-                log.info("loading Mapping Prior to bridge 512-dim -> 1024-dim")
+                log.info("loading robust Mapping Prior to bridge 512-dim -> 1024-dim")
                 self._prior = MappingPrior()
                 self._prior.load_state_dict(torch.load(prior_path, map_location="cpu"))
                 self._prior.eval()
@@ -159,7 +162,10 @@ class SDGenerator:
             # If using 512-dim, pipe it through our Mapping Prior to get the 1024-dim IP-Adapter vector
             if self.cfg.models.clip.embed_dim == 512 and self._prior is not None:
                 with torch.no_grad():
+                    # The prior outputs a normalized vector (magnitude 1.0)
                     tensor = self._prior(tensor)
+                    # IP-Adapter mathematically requires the unnormalized feature scale (~20.3)
+                    tensor = tensor * 20.3
             
             result = self._pipeline(
                 prompt=_DEFAULT_PROMPT,

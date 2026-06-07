@@ -12,18 +12,22 @@ from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
 class MappingPrior(nn.Module):
-    def __init__(self, in_dim=512, out_dim=1024, hidden_dim=1024):
+    """Translates 512-dim OpenAI CLIP vectors to 1024-dim LAION CLIP vectors."""
+    def __init__(self, in_dim=512, out_dim=1024, hidden_dim=2048):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, out_dim)
-        )
+        self.fc1 = nn.Linear(in_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, out_dim)
+        self.dropout = nn.Dropout(0.3)
+        self.act = nn.GELU()
         
     def forward(self, x):
-        return self.net(x)
+        h1 = self.dropout(self.act(self.ln1(self.fc1(x))))
+        h2 = self.dropout(self.act(self.ln2(self.fc2(h1)))) + h1
+        out = self.fc3(h2)
+        return F.normalize(out, dim=-1)
 
 def main():
     print("Loading 512-dim source embeddings...")
@@ -75,8 +79,10 @@ def main():
         total_loss = 0
         for x, y in loader:
             optimizer.zero_grad()
+            # y is unnormalized (~20.3 magnitude). We normalize it for stable optimization.
+            y_norm = F.normalize(y, dim=-1)
             pred = prior(x)
-            loss = F.mse_loss(pred, y)
+            loss = F.mse_loss(pred, y_norm)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -86,7 +92,8 @@ def main():
             prior.eval()
             with torch.no_grad():
                 val_pred = prior(val_z512)
-                val_mse = F.mse_loss(val_pred, val_z1024).item()
+                val_y_norm = F.normalize(val_z1024, dim=-1)
+                val_mse = F.mse_loss(val_pred, val_y_norm).item()
                 
                 # Compute retrieval metrics (Cosine Similarity)
                 # Normalize just for retrieval testing
