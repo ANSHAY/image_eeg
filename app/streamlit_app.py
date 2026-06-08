@@ -29,14 +29,19 @@ from collections import deque
 from pathlib import Path
 from typing import Optional
 
+# Ensure the project root is in sys.path so 'app' and 'generation' modules resolve
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import streamlit as st
 import torch
+from PIL import Image
 
 from app.components.eeg_plot import build_eeg_plot
 from app.components.fft_plot import build_fft_plot
 from app.components.metrics_panel import MetricsPanel
 from app.components.umap_plot import UMAPProjection
+from app.display_packet import DisplayPacket
 from app.theme import inject_theme_css
 from generation.retrieval_generator import RetrievalGenerator
 from models.eeg_encoder import EEGEncoder
@@ -91,16 +96,29 @@ def _load_encoder_cached(_cfg):
         try:
             state = torch.load(ckpt, map_location="cpu", weights_only=False)
             model.load_state_dict(state.get("model", state))
-            st.toast(f"loaded encoder from {ckpt.relative_to(Path(_cfg.paths.runs))}")
+            print(f"loaded encoder from {ckpt.relative_to(Path(_cfg.paths.runs))}")
         except Exception as e:
-            st.warning(f"checkpoint at {ckpt} failed to load: {e}")
+            print(f"checkpoint at {ckpt} failed to load: {e}")
     return model
 
 
 def _find_latest_checkpoint(cfg) -> Optional[Path]:
+    import argparse
+    import sys
+    p = argparse.ArgumentParser()
+    p.add_argument("--ckpt", type=str, default=None)
+    args, _ = p.parse_known_args(sys.argv[1:])
+    if args.ckpt:
+        return Path(args.ckpt)
+
     runs_dir = Path(cfg.paths.runs)
     if not runs_dir.is_dir():
         return None
+
+    final_candidates = list(runs_dir.glob("*/final/last.ckpt"))
+    if final_candidates:
+        return max(final_candidates, key=lambda p: p.stat().st_mtime)
+
     candidates = list(runs_dir.glob("*/fold_*/best.ckpt"))
     if not candidates:
         return None
@@ -115,11 +133,21 @@ def _load_retriever_cached(_cfg):
         return None
 
 
+MAGIC_SYNC_VAL = 999999.0
+
 # ------------------------------------------------------------------ LSL inlet thread
 
 def _start_lsl_thread(cfg, q: queue.Queue, stop_event: threading.Event) -> threading.Thread:
-    """Background thread: pull trials + markers from LSL → queue. The main
-    Streamlit fragment drains the queue per fragment tick."""
+    """Background thread: reads EEG and markers and pairs them flawlessly
+    using an explicit sequence ID embedded in the streams.
+
+    Protocol: 
+    - Streamer sends a sync sample: [MAGIC_SYNC_VAL, seq_id, 0, 0...]
+    - Streamer then sends 500 EEG samples.
+    - Streamer sends a JSON marker containing `"seq": seq_id`.
+    This receiver pulls both, buffers them by `seq_id`, and only pushes
+    a (marker, eeg) pair to the UI queue when both components arrive.
+    """
 
     def loop():
         try:
@@ -135,47 +163,111 @@ def _start_lsl_thread(cfg, q: queue.Queue, stop_event: threading.Event) -> threa
         eeg_inlet = StreamInlet(eeg_streams[0], recover=False)
         mk_inlet = StreamInlet(mk_streams[0], recover=False)
 
+        # Flush any garbage/old data in the buffers before we start
+        time.sleep(0.5)
+        eeg_inlet.pull_chunk(timeout=0.0, max_samples=81920)
+        mk_inlet.pull_chunk(timeout=0.0)
+
+        required = cfg.eeg.trial_length_samples
+        pending_eeg = {}
+        pending_markers = {}
+        
+        collecting_seq = None
+        collected_samples = []
+
         while not stop_event.is_set():
-            marker_sample, _ = mk_inlet.pull_sample(timeout=_LSL_POLL_TIMEOUT_S)
-            if marker_sample is None:
-                continue
-            try:
-                marker = json.loads(marker_sample[0])
-            except (json.JSONDecodeError, IndexError):
-                continue
-            chunk, _ = eeg_inlet.pull_chunk(
-                timeout=cfg.streaming.resolve_timeout_s,
-                max_samples=cfg.eeg.trial_length_samples,
-            )
-            arr = np.asarray(chunk, dtype=np.float32)
-            if arr.size == 0:
-                continue
-            # LSL chunk is (samples, channels) — we want (channels, samples).
-            arr = arr.T
-            if q.qsize() < _LSL_QUEUE_MAX:
-                q.put((marker, arr), block=False)
+            # 1. Pull EEG chunk
+            chunk, _ = eeg_inlet.pull_chunk(timeout=0.0)
+            if chunk:
+                for sample in chunk:
+                    if sample[0] == MAGIC_SYNC_VAL:
+                        collecting_seq = int(sample[1])
+                        collected_samples = []
+                    elif collecting_seq is not None:
+                        collected_samples.append(sample)
+                        if len(collected_samples) == required:
+                            pending_eeg[collecting_seq] = np.asarray(collected_samples, dtype=np.float32).T
+                            
+                            # Check if marker arrived earlier
+                            if collecting_seq in pending_markers:
+                                if q.qsize() < _LSL_QUEUE_MAX:
+                                    q.put((pending_markers[collecting_seq], pending_eeg[collecting_seq]), block=False)
+                                del pending_markers[collecting_seq]
+                                del pending_eeg[collecting_seq]
+                            
+                            collecting_seq = None
+
+            # 2. Pull marker
+            marker_sample, _ = mk_inlet.pull_sample(timeout=0.0)
+            if marker_sample:
+                try:
+                    marker = json.loads(marker_sample[0])
+                    seq = marker.get("seq")
+                    if seq is not None:
+                        pending_markers[seq] = marker
+                        
+                        # Check if EEG arrived earlier
+                        if seq in pending_eeg:
+                            if q.qsize() < _LSL_QUEUE_MAX:
+                                q.put((pending_markers[seq], pending_eeg[seq]), block=False)
+                            del pending_markers[seq]
+                            del pending_eeg[seq]
+                            
+                except (json.JSONDecodeError, IndexError):
+                    pass
+
+            # Cleanup memory if things get out of sync
+            if len(pending_eeg) > 20:
+                pending_eeg.clear()
+            if len(pending_markers) > 20:
+                pending_markers.clear()
+
+            if not chunk and not marker_sample:
+                time.sleep(0.005)
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()
     return t
 
 
-# ------------------------------------------------------------------ inference path
+# ------------------------------------------------------------------ processing pipeline
 
-def _process_trial(
+def _build_packet(
+    marker: dict,
     eeg: np.ndarray,
     pipeline: Pipeline,
     encoder: EEGEncoder,
     retriever: Optional[RetrievalGenerator],
-) -> tuple[np.ndarray, np.ndarray, Optional[dict], float]:
-    """Preprocess → encode → retrieve.  Returns (cleaned_eeg, z, retrieval_result, latency_ms)."""
+) -> Optional[DisplayPacket]:
+    """Process raw EEG → build an atomic DisplayPacket.
+
+    Everything the UI needs is bundled here in one shot:
+    cleaned EEG, embedding, retrieval result, ground-truth path,
+    labels, cosine score, and latency.
+    """
     t0 = time.perf_counter()
     cleaned = pipeline(eeg)
     with torch.no_grad():
         z = encoder(torch.from_numpy(cleaned).unsqueeze(0)).cpu().numpy()[0]
     ret = retriever.generate(z) if retriever is not None else None
-    elapsed = (time.perf_counter() - t0) * 1e3
-    return cleaned, z, ret, elapsed
+    latency_ms = (time.perf_counter() - t0) * 1e3
+
+    true_label = int(marker.get("label", -1))
+    pred_label = int(ret["label"]) if ret is not None else -1
+    cosine = float(ret["score"]) if ret is not None else 0.0
+
+    return DisplayPacket(
+        cleaned_eeg=cleaned,
+        z=z,
+        retrieval=ret,
+        marker=marker,
+        gt_image_path=marker.get("image_path"),
+        true_label=true_label,
+        pred_label=pred_label,
+        cosine=cosine,
+        latency_ms=latency_ms,
+        correct=(true_label == pred_label) and true_label >= 0,
+    )
 
 
 # ------------------------------------------------------------------ app entrypoint
@@ -190,37 +282,59 @@ def _init_session_state(cfg) -> None:
         st.session_state.pipeline = Pipeline(cfg=cfg)
         st.session_state.metrics = MetricsPanel(cfg=cfg)
         st.session_state.history: deque = deque(maxlen=_TRIAL_TRAIL_LEN)
-        st.session_state.last_marker = None
-        st.session_state.last_retrieval = None
-        st.session_state.last_eeg = None
+        st.session_state.current_packet: Optional[DisplayPacket] = None
 
 
-def _drain_one(cfg) -> bool:
-    """Pull one (marker, eeg) off the queue, process, update state.
-    Returns True if a trial was processed."""
-    try:
-        marker, eeg = st.session_state.lsl_queue.get_nowait()
-    except queue.Empty:
+def _drain_and_process(cfg) -> bool:
+    """Drain ALL queued trials from the LSL queue, skip stale ones,
+    process only the LATEST into a DisplayPacket.
+
+    The streamer sends trials faster than the UI can display them
+    (e.g. ~2 trials/s vs 1 display every 3s). Without draining,
+    the queue fills up and the UI falls further and further behind.
+    By always skipping to the newest trial, the UI stays in sync
+    with the live stream.
+
+    Returns True if a new packet was produced.
+    """
+    # Drain everything, keep only the latest (marker, eeg) pair.
+    latest = None
+    skipped = 0
+    while True:
+        try:
+            item = st.session_state.lsl_queue.get_nowait()
+        except queue.Empty:
+            break
+        latest = item
+        skipped += 1
+
+    if latest is None:
         return False
+
+    if skipped > 1:
+        print(f"[sync] skipped {skipped - 1} stale trials, showing latest")
+
+    marker, eeg = latest
 
     if eeg.shape != (cfg.eeg.num_channels, cfg.eeg.trial_length_samples):
         return False
 
     encoder = _load_encoder_cached(cfg)
     retriever = _load_retriever_cached(cfg)
-    cleaned, z, ret, latency_ms = _process_trial(
-        eeg, st.session_state.pipeline, encoder, retriever,
+    packet = _build_packet(
+        marker, eeg,
+        st.session_state.pipeline, encoder, retriever,
     )
-    st.session_state.last_eeg = cleaned
-    st.session_state.last_marker = marker
-    st.session_state.last_retrieval = ret
+    if packet is None:
+        return False
 
-    true_label = int(marker.get("label", -1))
-    pred_label = int(ret["label"]) if ret is not None else -1
-    cosine = float(ret["score"]) if ret is not None else 0.0
-    correct = (true_label == pred_label) and true_label >= 0
-    st.session_state.metrics.record(correct=correct, cosine=cosine, latency_ms=latency_ms)
-    st.session_state.history.append((z, true_label, pred_label))
+    st.session_state.current_packet = packet
+    st.session_state.metrics.record(
+        correct=packet.correct,
+        cosine=packet.cosine,
+        latency_ms=packet.latency_ms,
+    )
+    st.session_state.history.append((packet.z, packet.true_label, packet.pred_label))
     return True
 
 
@@ -236,8 +350,11 @@ def main() -> None:
 
     _init_session_state(cfg)
 
-    # Drain one trial per refresh to avoid blocking the UI.
-    _drain_one(cfg)
+    # Drain ALL stale trials from LSL, process only the latest.
+    processed = _drain_and_process(cfg)
+
+    # The single packet the UI renders — everything from one trial.
+    pkt: Optional[DisplayPacket] = st.session_state.current_packet
 
     bank = _load_bank_cached()
     if bank is None:
@@ -250,14 +367,14 @@ def main() -> None:
     left, right = st.columns([1.3, 1.0])
     with left:
         st.markdown(f"### {cfg.ui.strings.panel_eeg}")
-        if st.session_state.last_eeg is not None:
+        if pkt is not None:
             st.plotly_chart(
-                build_eeg_plot(st.session_state.last_eeg, cfg=cfg),
+                build_eeg_plot(pkt.cleaned_eeg, cfg=cfg),
                 use_container_width=True, key="eeg",
             )
             st.markdown(f"### {cfg.ui.strings.panel_fft}")
             st.plotly_chart(
-                build_fft_plot(st.session_state.last_eeg, cfg=cfg),
+                build_fft_plot(pkt.cleaned_eeg, cfg=cfg),
                 use_container_width=True, key="fft",
             )
         else:
@@ -268,19 +385,28 @@ def main() -> None:
 
     with right:
         st.markdown(f"### {cfg.ui.strings.panel_recon}")
-        if st.session_state.last_retrieval is not None:
-            ret = st.session_state.last_retrieval
-            st.image(ret["image"], use_container_width=True)
-            mk = st.session_state.last_marker or {}
-            cosine_label = cfg.ui.strings.metric_cosine
-            cls_label = cfg.ui.strings.metric_predicted_class
-            true_class = mk.get("class_name") or f"label={mk.get('label', '?')}"
+        if pkt is not None and pkt.retrieval is not None:
+            img_col1, img_col2 = st.columns(2)
+
+            with img_col1:
+                st.markdown("**Ground Truth**")
+                if pkt.gt_image_path and Path(pkt.gt_image_path).is_file():
+                    gt_img = Image.open(pkt.gt_image_path).convert("RGB")
+                    st.image(gt_img, use_container_width=True)
+                else:
+                    st.write(f"Image not found: {pkt.gt_image_path or '?'}")
+
+            with img_col2:
+                st.markdown("**Reconstruction**")
+                st.image(pkt.retrieval["image"], use_container_width=True)
+
+            true_class = pkt.marker.get("class_name") or f"label={pkt.true_label}"
             st.markdown(
                 f'<div class="vcr-card">'
-                f'<div class="vcr-metric-label">{cls_label}</div>'
-                f'<div class="vcr-metric-value">{ret["label"]}</div>'
-                f'<div class="vcr-metric-label">{cosine_label}</div>'
-                f'<div class="vcr-metric-value">{ret["score"]:.3f}</div>'
+                f'<div class="vcr-metric-label">{cfg.ui.strings.metric_predicted_class}</div>'
+                f'<div class="vcr-metric-value">{pkt.pred_label}</div>'
+                f'<div class="vcr-metric-label">{cfg.ui.strings.metric_cosine}</div>'
+                f'<div class="vcr-metric-value">{pkt.cosine:.3f}</div>'
                 f'<div class="vcr-metric-label">{cfg.ui.strings.panel_truth}</div>'
                 f'<div>{true_class}</div>'
                 f'</div>',
@@ -307,8 +433,13 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-    # Self-refresh tick at the configured cadence.
-    time.sleep(cfg.ui.refresh_interval_ms / 1000.0)
+    if processed:
+        # Wait so the user can actually see the image.
+        time.sleep(3.0)
+    else:
+        # Self-refresh tick at the configured cadence if no new trial.
+        time.sleep(cfg.ui.refresh_interval_ms / 1000.0)
+
     st.rerun()
 
 

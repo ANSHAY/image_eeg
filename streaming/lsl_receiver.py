@@ -116,17 +116,19 @@ def main() -> int:
     eeg_inlet = StreamInlet(eeg_info, recover=False)
     marker_inlet = StreamInlet(marker_info, recover=False)
 
-    log.info("inlets open; waiting for a marker to declare trial start")
-    marker = _pull_marker(marker_inlet, timeout_s=cfg.streaming.resolve_timeout_s)
-    if marker is None:
-        log.warning("no marker received within timeout; capturing anyway")
-
+    # Protocol: streamer pushes EEG samples first, marker last.
+    # Collect samples, then read the marker that follows.
     log.info("collecting %d samples", cfg.eeg.trial_length_samples)
     trial = _pull_trial(
         eeg_inlet,
         n_samples=cfg.eeg.trial_length_samples,
         timeout_s=cfg.streaming.resolve_timeout_s + 2.0,
     )
+
+    log.info("waiting for marker (trial-complete signal)")
+    marker = _pull_marker(marker_inlet, timeout_s=cfg.streaming.resolve_timeout_s)
+    if marker is None:
+        log.warning("no marker received within timeout; captured EEG without metadata")
 
     if trial.size == 0:
         log.error("no EEG samples received; stream may have stalled")

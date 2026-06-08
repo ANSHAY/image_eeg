@@ -64,9 +64,10 @@ def _build_marker_outlet(cfg: Config) -> StreamOutlet:
     return StreamOutlet(info)
 
 
-def _encode_marker(trial: Trial) -> str:
+def _encode_marker(trial: Trial, seq: int) -> str:
     return json.dumps(
         {
+            "seq": seq,
             "trial_id": trial.trial_id,
             "subject_id": trial.subject_id,
             "label": trial.label,
@@ -76,13 +77,21 @@ def _encode_marker(trial: Trial) -> str:
     )
 
 
+MAGIC_SYNC_VAL = 999999.0
+
 def _stream_trial(
     trial: Trial,
     eeg_outlet: StreamOutlet,
     marker_outlet: StreamOutlet,
     sample_period_s: float,
+    seq: int = 0,
 ) -> None:
-    marker_outlet.push_sample([_encode_marker(trial)])
+    # 1. Send a magic sync sample on the EEG outlet with the trial seq ID.
+    # The receiver will look for MAGIC_SYNC_VAL on channel 0, and read seq from channel 1.
+    sync_sample = [MAGIC_SYNC_VAL, float(seq)] + [0.0] * (trial.eeg_data.shape[0] - 2)
+    eeg_outlet.push_sample(sync_sample)
+
+    # 2. Push EEG samples.
     eeg = trial.eeg_data  # shape: (channels, samples)
     next_deadline = time.perf_counter() + sample_period_s
     for t_idx in range(eeg.shape[1]):
@@ -93,6 +102,9 @@ def _stream_trial(
             if remaining > 0:
                 time.sleep(remaining)
             next_deadline += sample_period_s
+
+    # 3. Push marker.
+    marker_outlet.push_sample([_encode_marker(trial, seq)])
 
 
 def _parse_args(default_speed: float) -> argparse.Namespace:
@@ -144,7 +156,7 @@ def main() -> int:
         sent = 0
         while True:
             for trial in trials:
-                _stream_trial(trial, eeg_outlet, marker_outlet, sample_period_s)
+                _stream_trial(trial, eeg_outlet, marker_outlet, sample_period_s, seq=sent)
                 sent += 1
                 if sent % 10 == 0:
                     log.info("sent %d trials", sent)

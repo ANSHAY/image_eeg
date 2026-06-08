@@ -54,15 +54,30 @@ class ContrastiveAlignmentLoss(nn.Module):
         return self.log_temperature.clamp(max=self.log_temperature_max).exp()
 
     def info_nce(self, z_eeg: torch.Tensor, z_img: torch.Tensor) -> torch.Tensor:
-        """Symmetric InfoNCE on a (B, B) similarity matrix."""
+        """Symmetric InfoNCE that handles duplicate classes in the batch.
+        
+        Standard InfoNCE penalizes the model if two trials of the SAME class
+        are present in the batch, because it assumes only the diagonal is positive.
+        This fixes it by finding all identical targets (cos_sim > 0.99) and
+        treating them all as valid positives (SupCon formulation).
+        """
         if z_eeg.shape != z_img.shape:
             raise ValueError(
                 f"shape mismatch: z_eeg {z_eeg.shape} vs z_img {z_img.shape}",
             )
+        
+        # Identical image targets = same class
+        with torch.no_grad():
+            sim_img = z_img @ z_img.t()
+            pos_mask = (sim_img > 0.99).float()
+            target_probs = pos_mask / pos_mask.sum(dim=1, keepdim=True)
+
         logits = z_eeg @ z_img.t() * self.temperature()
-        targets = torch.arange(z_eeg.size(0), device=z_eeg.device)
-        loss_e2i = F.cross_entropy(logits, targets)
-        loss_i2e = F.cross_entropy(logits.t(), targets)
+        
+        # Cross entropy with soft targets
+        loss_e2i = F.cross_entropy(logits, target_probs)
+        loss_i2e = F.cross_entropy(logits.t(), target_probs)
+        
         return 0.5 * (loss_e2i + loss_i2e)
 
     def mse(self, z_eeg: torch.Tensor, z_img: torch.Tensor) -> torch.Tensor:
