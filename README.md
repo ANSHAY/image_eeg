@@ -5,7 +5,7 @@
 
 Reconstruct the image a person was looking at from their EEG signal — fully offline, on a consumer laptop with no discrete GPU.
 
-A 0.5-second, 128-channel EEG trial (1000 Hz) is streamed over [Lab Streaming Layer](https://github.com/sccn/labstreaminglayer), encoded into the CLIP image-embedding space by a 1-D CNN, and then turned back into a picture in one of two ways: **retrieval**, which looks up the nearest image in a precomputed CLIP bank, or **generative**, which conditions Stable Diffusion v1.5 + IP-Adapter on the predicted embedding. A Streamlit split-screen demo shows the live brainwaves on one side and the reconstruction on the other.
+A 0.5-second, 128-channel EEG trial (1000 Hz) is streamed over [Lab Streaming Layer](https://github.com/sccn/labstreaminglayer), encoded into the CLIP image-embedding space by a 1-D CNN, and then turned back into a picture in one of two ways: **retrieval**, which looks up the nearest image in a precomputed CLIP bank, or **generative**, which conditions SD-Turbo + IP-Adapter on the predicted embedding. A Streamlit split-screen demo shows the live brainwaves on one side and the reconstruction on the other.
 
 > **About this project.** This is a personal research and portfolio project — an engineering exercise in running a modern multi-model pipeline end-to-end, fully offline, on modest hardware. It is not a medical device and not a scientific result. Several of the quality gates below are validated on *synthetic* EEG because the real dataset ([Spampinato et al.](https://github.com/perceivelab/eeg_visual_classification)) is gated behind a manual download I haven't completed; the tables say plainly what is real and what is synthetic. I'd rather under-claim than overclaim.
 
@@ -20,7 +20,7 @@ flowchart LR
     E --> F[EEG encoder<br/>1-D CNN → CLIP space]
     F --> G{reconstruction mode}
     G -->|retrieval| H[FAISS k-NN over a<br/>precomputed CLIP image bank]
-    G -->|generative| I[Stable Diffusion v1.5<br/>+ IP-Adapter]
+    G -->|generative| I[SD-Turbo<br/>+ IP-Adapter]
     H --> J[Streamlit UI<br/>live EEG · reconstruction · UMAP]
     I --> J
     K[CLIP image encoder<br/>frozen] -.training targets.-> F
@@ -43,6 +43,10 @@ combined InfoNCE (0.7) + MSE (0.3) objective under cross-subject cross-validatio
 checks). At inference the PyTorch encoder can be swapped for an OpenVINO IR by flipping a
 single value in `config.yaml`.
 
+The generative path targets SD-Turbo + IP-Adapter. The diffusion checkpoint is set in
+`config.yaml`; the shipped default points at the lighter Stable Diffusion v1.5 so the demo
+still runs on weaker hardware, and can be pointed back at SD-Turbo where the hardware allows.
+
 ## Hardware target
 
 - Intel Core Ultra 5 225H (CPU + integrated NPU + integrated graphics)
@@ -50,7 +54,7 @@ single value in `config.yaml`.
 - Linux (Arch-based)
 - ~100 GB free disk
 
-Inference runs fully offline. CLIP and Stable Diffusion are downloaded once during setup, then frozen.
+Inference runs fully offline. CLIP and the diffusion model are downloaded once during setup, then frozen.
 
 ## Setup
 
@@ -126,7 +130,7 @@ number.
 | OpenVINO speedup (median/median) | 2–5× | **1.89× CPU-only** (NPU driver absent on dev box) | [results/phase5_bench.json](results/phase5_bench.json) |
 | End-to-end latency (retrieval) | p95 < 2 s | **p95 = 167.7 ms · median 51.9 ms** | [results/phase6_e2e/summary.json](results/phase6_e2e/summary.json) |
 | Real-data LOSO top-5 ≥ 30 % | spec gate | ⏸ awaiting Spampinato dataset | — |
-| End-to-end latency (generative) | p95 < 60 s | ⏸ awaiting Stable Diffusion weights | — |
+| End-to-end latency (generative) | p95 < 60 s | ⏸ awaiting SD-Turbo weights | — |
 
 ## Roadmap
 
@@ -137,7 +141,7 @@ The engineering for every stage is in place; what remains needs data or weights 
    `data/raw/spampinato/`.
 2. **Full leave-one-subject-out training** on real data, to fill in the top-5 accuracy gate:
    `.venv/bin/python -m models.train`.
-3. **Generative path** end-to-end, once the Stable Diffusion weights are cached:
+3. **Generative path** end-to-end, once the SD-Turbo weights are cached:
    `pytest -m integration tests/test_sd_generator.py`.
 4. **Spot-check and comparison grids** on real held-out trials via
    `scripts/spot_check_retrieval.py` and `scripts/compare_generators.py`.
@@ -156,7 +160,7 @@ set `VCR_CONFIG=/path/to/alt.yaml` or pass `path=` to `load_config()`.
 - **EEG / signal processing:** MNE, SciPy, `pylsl` (Lab Streaming Layer)
 - **Representation learning:** PyTorch (CPU), CLIP ViT-B/32 (512-dim) via `transformers`
 - **Retrieval:** FAISS (`IndexFlatIP` over unit-norm embeddings)
-- **Generation:** diffusers — Stable Diffusion v1.5 + IP-Adapter
+- **Generation:** diffusers — SD-Turbo + IP-Adapter (shipped config uses SD v1.5 for lighter hardware)
 - **Edge inference:** ONNX + OpenVINO (CPU / iGPU / NPU)
 - **App:** Streamlit, Plotly, UMAP
 - **Foundations:** pydantic config, pytest, TensorBoard
@@ -185,7 +189,7 @@ set `VCR_CONFIG=/path/to/alt.yaml` or pass `path=` to `load_config()`.
 
 - **EEG dataset:** [Spampinato et al., *Deep Learning Human Mind for Automated Visual Classification*](https://github.com/perceivelab/eeg_visual_classification) (primary), with [THINGS-EEG2](https://osf.io/anp5v/) as a fallback. Datasets are **not** redistributed here — download them from the original sources under their own licenses, and please cite the authors if you use their data.
 - **CLIP:** `openai/clip-vit-base-patch32` via Hugging Face `transformers`.
-- **Generation:** `runwayml/stable-diffusion-v1-5` with [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) (`h94/IP-Adapter`), via `diffusers`.
+- **Generation:** SD-Turbo (`stabilityai/sd-turbo`) with [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) (`h94/IP-Adapter`) via `diffusers`; the shipped config uses the lighter `runwayml/stable-diffusion-v1-5` checkpoint for weaker hardware.
 - **Streaming:** [Lab Streaming Layer](https://github.com/sccn/labstreaminglayer).
 
 ## License
