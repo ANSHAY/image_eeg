@@ -67,3 +67,9 @@ Thumbs.db
 config.local.yaml
 *.env
 .env
+
+# Internal working docs (spec, plan, knowledge graph) — kept local, not published
+docs/
+
+# Local agent / editor config
+.claude/
